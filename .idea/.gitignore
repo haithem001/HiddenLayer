@@ -1,0 +1,27 @@
+# Default ignored files
+/shelf/
+/workspace.xml
+
+# IntelliJ
+.idea/
+*.iml
+/intellij-javadocs-4.0.1.xml
+/misc.xml
+/modules.xml
+/vcs.xml
+/inspectionProfiles/*
+
+/dictionaries/*
+# Python
+__pycache__/
+*.pyc
+
+# Logs / outputs
+logs/
+checkpoints/
+*.png
+# Editor-based HTTP Client requests
+/httpRequests/
+# Datasource local storage ignored files
+/dataSources/
+/dataSources.local.xml

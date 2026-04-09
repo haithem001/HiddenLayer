@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Real-Time DQN Walking</title>
+
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            background: #000;
+            color: #ddd;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #container {
+            display: flex;
+            flex-direction: row;
+            height: 100vh;
+        }
+
+        #left-col {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-width: 0;
+            background: #111;
+            position: relative;
+        }
+
+        #video-container {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 8px 8px 4px 8px;
+            min-height: 0;
+        }
+
+        #video-feed {
+            max-width: 100%;
+            max-height: 100%;
+            border: 2px solid #333;
+            border-radius: 8px;
+            object-fit: contain;
+        }
+
+        /* Floating badge over the video */
+        #cam-mode-badge {
+            position: absolute;
+            top: 16px;
+            left: 16px;
+            padding: 5px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            pointer-events: none;
+            z-index: 10;
+            transition: background 0.3s, border-color 0.3s, color 0.3s;
+            border: 1px solid #444;
+            background: rgba(0,0,0,0.55);
+            color: #aaa;
+        }
+        #cam-mode-badge.overview {
+            background: rgba(10,50,15,0.80);
+            border-color: #2d8f2d;
+            color: #a5d6a7;
+        }
+        #cam-mode-badge.fp {
+            background: rgba(5,30,70,0.85);
+            border-color: #2196F3;
+            color: #90caf9;
+        }
+
+
+        #reward-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #666;
+            padding: 0 2px;
+        }
+        #reward-header span { color: #00d4ff; font-weight: bold; }
+        #reward-age { font-size: 10px; color: #555; font-style: italic; }
+
+        #reward-plot-img {
+            flex: 1; width: 100%; object-fit: fill;
+            border: 1px solid #1c2333; border-radius: 6px;
+            background: #0a0c10; display: none;
+        }
+        #reward-placeholder {
+            flex: 1; display: flex; align-items: center; justify-content: center;
+            color: #333; font-size: 13px;
+            border: 1px solid #1c2333; border-radius: 6px;
+        }
+
+        #controls {
+            width: 320px; flex-shrink: 0;
+            display: flex; flex-direction: column;
+            padding: 10px; gap: 10px;
+            overflow-y: auto; background: #0a0a0a;
+        }
+
+        .control-section {
+            display: flex; flex-direction: column;
+            padding: 10px; background: #1a1a1a;
+            border: 1px solid #333; border-radius: 6px;
+        }
+        .control-section h3 {
+            margin: 0 0 10px 0; padding-bottom: 5px;
+            border-bottom: 1px solid #444;
+            color: #aaa; font-size: 13px;
+        }
+
+        .button {
+            color: #f9f9f9; padding: 7px 11px;
+            background: #222; border: 1px solid #444;
+            border-radius: 4px; cursor: pointer;
+            margin: 2px; font-size: 12px; transition: all 0.2s;
+        }
+        .button:hover  { background: #333; border-color: #666; }
+        .button:active { background: #444; }
+        .button.active  { background: #1a5f1a; border-color: #2d8f2d; }
+        .button.danger  { background: #3d1a1a; border-color: #5f2d2d; }
+        .button.danger:hover { background: #5f2d2d; }
+        .button.primary { background: #1a3d5f; border-color: #2d5f8f; }
+        .button.primary:hover { background: #2d5f8f; }
+        .button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+        /* Camera toggle — distinct look for each state */
+        #hormone-bars {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            height: 140px;
+            gap: 4px;
+            padding: 6px;
+            background: #0a0a0a;
+            border: 1px solid #222;
+            border-radius: 6px;
+            overflow-x: auto;
+        }
+
+        .h-bar {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 20px;
+            min-width: 20px;
+        }
+
+        .h-bar-fill {
+            width: 100%;
+            background: linear-gradient(to top, #2196F3, #00d4ff);
+            border-radius: 3px 3px 0 0;
+            transition: height 0.15s ease, background 0.15s ease;
+            min-height: 2px;   /* always visible even at 0 */
+        }
+        .h-bar-label {
+            margin-top: 4px;
+            font-size: 9px;
+            color: #777;
+            text-align: center;
+            writing-mode: vertical-rl;
+            transform: rotate(180deg);
+        }
+        #cam-toggle {
+            width: 100%; text-align: center;
+            font-size: 13px; padding: 9px;
+        }
+        #cam-toggle.state-overview {
+            background: #0d2b0d; border-color: #2d8f2d; color: #a5d6a7;
+        }
+        #cam-toggle.state-overview:hover { background: #155215; }
+        #cam-toggle.state-fp {
+            background: #0a1e40; border-color: #2196F3; color: #90caf9;
+        }
+        #cam-toggle.state-fp:hover { background: #0d2d5f; }
+
+        #fp-hint {
+            display: none; margin-top: 8px;
+            padding: 7px 9px;
+            background: #080f1a; border: 1px solid #1a3050;
+            border-radius: 4px; font-size: 10px;
+            color: #546e7a; line-height: 1.7;
+        }
+        #fp-hint.visible { display: block; }
+
+        .buttons { display: flex; flex-wrap: wrap; gap: 4px; }
+
+        .status {
+            margin-top: 8px; padding: 8px;
+            font-size: 12px; color: #ddd;
+            background: #0a0a0a; border: 1px solid #333;
+            border-radius: 4px; word-break: break-word;
+        }
+
+        .dqn-status {
+            display: grid; grid-template-columns: auto 1fr;
+            gap: 4px 10px; margin-bottom: 8px; font-size: 11px;
+        }
+        .dqn-status .label { color: #888; }
+        .dqn-status .value { color: #ddd; font-weight: bold; }
+        .dqn-status .value.training { color: #4CAF50; }
+        .dqn-status .value.active   { color: #2196F3; }
+    </style>
+    <base target="_blank">
+</head>
+
+<body>
+<div id="container">
+
+    <div id="left-col">
+        <!-- Floating camera mode badge -->
+        <div id="cam-mode-badge" class="overview">Overview</div>
+
+        <div id="video-container">
+            <img id="video-feed" src="/video_feed" alt="World Visualization">
+
+
+        </div>
+    </div>
+
+    <div id="controls">
+        <div class="control-section">
+            <div id="reward-header">
+                <h3>Reward Curve</h3>
+                <span id="reward-age"></span>
+            </div>
+            <img id="reward-plot-img" alt="reward curve">
+            <div id="reward-placeholder">No reward data yet — start training to see the curve</div>
+        </div>
+        <div class="control-section">
+            <h3>Hormone Monitor</h3>
+
+            <div style="display:flex; gap:6px; margin-bottom:8px; flex-wrap:wrap">
+                <select id="hormone-group-select" class="button" style="flex:1; min-width:120px">
+                    <option value="G1">G1 — Consciousness</option>
+                    <option value="G2">G2 — Body</option>
+                    <option value="G3">G3 — Autonomous</option>
+                </select>
+                <select id="walker-select" class="button" style="flex:1; min-width:80px">
+                    <option value="0">Walker 1</option>
+                    <option value="1">Walker 2</option>
+                    <option value="2">Walker 3</option>
+                    <option value="3">Walker 4</option>
+                    <option value="4">Walker 5</option>
+                </select>
+            </div>
+
+            <div id="hormone-bars"></div>
+            <div id="hormone-necessity" style="margin-top:6px; font-size:10px; color:#666; min-height:16px"></div>
+        </div>
+        <div class="control-section">
+            <h3>System Controls</h3>
+            <div class="buttons">
+                <button class="button primary" id="start">▶ Start</button>
+                <button class="button"         id="pause">⏸ Pause</button>
+                <button class="button danger"  id="clear">⏹ Clear</button>
+            </div>
+            <div class="buttons" style="margin-top:8px">
+                <button class="button" id="mouse-look">Mouse Look</button>
+            </div>
+        </div>
+
+        <!-- Camera view section -->
+        <div class="control-section">
+            <h3>Camera View</h3>
+            <button class="button state-overview" id="cam-toggle">
+                FPV (V)
+            </button>
+            <div id="fp-hint"></div>
+        </div>
+
+        <div class="control-section">
+            <h3>PPO Agent</h3>
+            <div class="dqn-status">
+                <span class="label">Status:</span>   <span class="value" id="dqn-status-text">Not initialized</span>
+                <span class="label">Steps:</span>    <span class="value" id="dqn-steps">0</span>
+                <span class="label">Reward:</span>   <span class="value" id="dqn-reward">0.00</span>
+                <span class="label">Distance:</span> <span class="value" id="dqn-distance">0.00</span>
+                <span class="label">Targets:</span>  <span class="value" id="dqn-targets">0</span>
+            </div>
+            <div class="buttons">
+                <button class="button primary" id="dqn-activate">Activate Agent</button>
+                <button class="button danger"  id="dqn-deactivate">⏹</button>
+            </div>
+        </div>
+
+        <div class="control-section">
+            <h3>Training</h3>
+            <div class="buttons">
+                <button class="button primary" id="train-start">▶</button>
+                <button class="button danger"  id="train-stop">⏸</button>
+            </div>
+        </div>
+
+        <div class="control-section">
+            <h3>Model</h3>
+            <div class="buttons">
+                <button class="button"         id="model-save">Save</button>
+                <button class="button"         id="model-load">Load</button>
+                <button class="button primary" id="model-load-best">Load Best</button>
+                <button class="button"         id="reset-humanoid">Reset</button>
+            </div>
+        </div>
+
+        <div class="control-section" style="flex:1">
+            <h3>📋 Status</h3>
+            <div id="status" class="status">World is ready.</div>
+        </div>
+    </div>
+
+</div>
+<script>
+    const statusEl     = document.getElementById("status");
+    const mouseLookBtn = document.getElementById("mouse-look");
+    const rewardImg    = document.getElementById("reward-plot-img");
+    const rewardPH     = document.getElementById("reward-placeholder");
+    const rewardAgeEl  = document.getElementById("reward-age");
+    const camToggleBtn = document.getElementById("cam-toggle");
+    const camBadge     = document.getElementById("cam-mode-badge");
+    const fpHint       = document.getElementById("fp-hint");
+
+    const ws = new WebSocket(`ws://${window.location.host}/ws`);
+    let connected        = false;
+    let mouseLookEnabled = false;
+    let isFirstPerson    = false;
+    let statusInterval   = null;
+    let rewardInterval   = null;
+    let lastRewardMs     = null;
+    let ageTickInterval  = null;
+    const hormoneContainer = document.getElementById("hormone-bars");
+    const groupSelect = document.getElementById("hormone-group-select");
+
+
+    const walkerSelect     = document.getElementById("walker-select");
+    const necessityEl      = document.getElementById("hormone-necessity");
+
+    let hormoneBars        = {};
+    let lastWalkerHormones = [];
+
+    function createHormoneBars(groupData) {
+        hormoneContainer.innerHTML = "";
+        hormoneBars = {};
+        for (const name in groupData) {
+            const wrapper = document.createElement("div");
+            wrapper.className = "h-bar";
+
+            const fill = document.createElement("div");
+            fill.className = "h-bar-fill";
+            fill.style.height = "0%";
+            fill.style.transition = "height 0.15s ease, background 0.15s ease";
+
+            const label = document.createElement("div");
+            label.className = "h-bar-label";
+            label.textContent = name.substring(0, 4); // short label
+
+            wrapper.appendChild(fill);
+            wrapper.appendChild(label);
+            hormoneContainer.appendChild(wrapper);
+            hormoneBars[name] = fill;
+        }
+    }
+
+    function updateHormoneBars(groupData) {
+        for (const name in groupData) {
+            if (!hormoneBars[name]) return; // rebuild needed
+            const value = Math.max(0, Math.min(1, groupData[name]));
+            const fill  = hormoneBars[name];
+            const prevH = parseFloat(fill.style.height) / 100 || 0;
+
+            fill.style.height = (value * 100) + "%";
+
+            // spike flash: if jumped by more than 0.15, flash yellow
+            if (Math.abs(value - prevH) > 0.15) {
+                fill.style.background = "#FFD700";
+                setTimeout(() => {
+                    const hue = value * 120;
+                    fill.style.background = `hsl(${hue}, 80%, 50%)`;
+                }, 300);
+            } else {
+                const hue = value * 120; // red=0 → green=120
+                fill.style.background = `hsl(${hue}, 80%, 50%)`;
+            }
+        }
+    }
+
+    function renderWalkerHormones() {
+        const wi    = parseInt(walkerSelect.value);
+        const group = groupSelect.value;
+
+        if (!lastWalkerHormones[wi]) return;
+        const data   = walker.hormones?.[group];
+        if (!data) return;
+
+        // Rebuild bars if hormone names changed
+        const currentNames  = Object.keys(data).join(",");
+        const existingNames = Object.keys(hormoneBars).join(",");
+        if (currentNames !== existingNames) createHormoneBars(data);
+
+        updateHormoneBars(data);
+
+        walkerSelect.style.borderColor = walker.alive ? "#2d8f2d" : "#8f2d2d";
+    }
+
+    groupSelect.onchange  = () => { hormoneBars = {}; renderWalkerHormones(); };
+    walkerSelect.onchange = () => { hormoneBars = {}; renderWalkerHormones(); };
+
+    // hook into existing ws.onmessage — add this inside the dqn_status handler:
+    // if (msg.data.walkers_hormones) {
+    //     lastWalkerHormones = msg.data.walkers_hormones;
+    //     renderWalkerHormones();
+    // }
+    // ── Camera mode UI ────────────────────────────────────────────────
+    function applyCameraMode(fp) {
+        isFirstPerson = fp;
+        if (fp) {
+            camToggleBtn.className   = "button state-fp";
+            camToggleBtn.innerHTML   = "First-Person &nbsp;→&nbsp; Overview &nbsp;(press V)";
+            camBadge.textContent     = "FPV on";
+            camBadge.className       = "fp";
+            fpHint.classList.add("visible");
+            // Disable mouse look — camera is automatic
+            if (mouseLookEnabled) {
+                mouseLookEnabled = false;
+                mouseLookBtn.textContent = "Mouse Look";
+                mouseLookBtn.classList.remove("active");
+                document.exitPointerLock?.();
+                sendCommand("mouse_look", {enabled: false});
+            }
+            mouseLookBtn.disabled = true;
+        } else {
+            camToggleBtn.className   = "button state-overview";
+            camToggleBtn.innerHTML   = "Overview &nbsp;→&nbsp; First-Person &nbsp;(press V)";
+            camBadge.textContent     = "FPV off";
+            camBadge.className       = "overview";
+            fpHint.classList.remove("visible");
+            mouseLookBtn.disabled    = false;
+        }
+    }
+
+    // ── Reward curve ──────────────────────────────────────────────────
+    function refreshRewardPlot() {
+        const ts  = Date.now();
+        const url = `/reward_plot?t=${ts}`;
+        const probe = new Image();
+        probe.onload = () => {
+            rewardImg.src           = url;
+            rewardImg.style.display = "block";
+            rewardPH.style.display  = "none";
+            lastRewardMs            = ts;
+            updateAgeLabel();
+        };
+        probe.src = url;
+    }
+
+    function updateAgeLabel() {
+        if (!lastRewardMs) { rewardAgeEl.textContent = ""; return; }
+        const s = Math.round((Date.now() - lastRewardMs) / 1000);
+        rewardAgeEl.textContent = s < 3 ? "● just updated" :
+            s < 60 ? `${s}s ago` : `${Math.round(s/60)}m ago`;
+    }
+
+    function startRewardPolling() {
+        refreshRewardPlot();
+        clearInterval(rewardInterval);
+        rewardInterval = setInterval(refreshRewardPlot, 4000);
+        clearInterval(ageTickInterval);
+        ageTickInterval = setInterval(updateAgeLabel, 2000);
+    }
+
+    // ── WebSocket ─────────────────────────────────────────────────────
+    ws.onopen = () => {
+        connected = true;
+        setStatus("Connected to server.");
+        startStatusUpdates();
+        startRewardPolling();
+    };
+    ws.onclose = () => { connected = false; setStatus("❌ Disconnected."); clearInterval(statusInterval); };
+    ws.onerror = () => setStatus("WebSocket error.");
+
+    ws.onmessage = (event) => {
+        try {
+            const msg = JSON.parse(event.data);
+            if (msg.type === "status_update") {
+                setStatus(msg.message);
+                if (msg.message.includes("Update #") || msg.message.includes("📊 Plot") || msg.message.includes("🏆 New best"))
+                    setTimeout(refreshRewardPlot, 300);
+
+            } else if (msg.type === "dqn_status") {
+                updateDQNStatus(msg.data);
+                if (typeof msg.data.first_person === "boolean")
+                    applyCameraMode(msg.data.first_person);
+
+            } else if (msg.type === "camera_mode") {
+                applyCameraMode(msg.first_person);
+
+            } else if (msg.type === "plot_updated") {
+                setTimeout(refreshRewardPlot, 150);
+            }
+        } catch (e) { console.error("WS parse error", e); }
+    };
+
+    function sendCommand(type, data = {}) {
+        if (!connected) { setStatus("Not connected."); return; }
+        ws.send(JSON.stringify({type, ...data}));
+    }
+
+    function setStatus(msg) {
+        statusEl.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+    }
+
+    function updateDQNStatus(data) {
+        const st = document.getElementById('dqn-status-text');
+        if      (data.training)     { st.textContent = 'Training'; st.className = 'value training'; }
+        else if (data.agent_active) { st.textContent = 'Active';   st.className = 'value active'; }
+        else if (data.initialized)  { st.textContent = 'Ready';    st.className = 'value'; }
+        else                        { st.textContent = 'Not initialized'; st.className = 'value'; }
+
+        // hormones — separate block, not in the chain
+        if (data.walkers_hormones) {
+            lastWalkerHormones = data.walkers_hormones;
+            renderWalkerHormones();
+        }
+
+        document.getElementById('dqn-steps').textContent    = (data.total_steps || 0).toLocaleString();
+        document.getElementById('dqn-reward').textContent   = (data.episode_reward || 0).toFixed(1);
+        document.getElementById('dqn-distance').textContent = (data.best_distance || 0).toFixed(2) + 'm';
+        document.getElementById('dqn-targets').textContent  = data.targets_reached || 0;
+
+        document.getElementById('dqn-activate').disabled   = !!data.agent_active;
+        document.getElementById('dqn-deactivate').disabled = !data.agent_active;
+        document.getElementById('train-start').disabled    = !!data.training;
+        document.getElementById('train-stop').disabled     = !data.training;
+
+        if (data.training) refreshRewardPlot();
+    }
+
+    function startStatusUpdates() {
+        clearInterval(statusInterval);
+        statusInterval = setInterval(() => sendCommand("dqn_status"), 2000);
+    }
+
+    // ── Buttons ───────────────────────────────────────────────────────
+    document.getElementById("start").onclick           = () => { sendCommand("start");          setStatus("started"); };
+    document.getElementById("pause").onclick           = () => { sendCommand("pause");          setStatus("Toggled pause"); };
+    document.getElementById("clear").onclick           = () => { sendCommand("clear");          setStatus("Cleared"); };
+    document.getElementById("dqn-activate").onclick   = () => { sendCommand("dqn_activate");   setStatus("Activating…"); };
+    document.getElementById("dqn-deactivate").onclick = () => { sendCommand("dqn_deactivate"); setStatus("Deactivating…"); };
+    document.getElementById("train-start").onclick    = () => { sendCommand("train_start");    setStatus("Training started…"); };
+    document.getElementById("train-stop").onclick     = () => { sendCommand("train_stop");     setStatus("Stopping training…"); };
+    document.getElementById("model-save").onclick     = () => { sendCommand("save_model");     setStatus("Saving…"); };
+    document.getElementById("model-load").onclick     = () => { sendCommand("load_latest");    setStatus("Loading…"); };
+    document.getElementById("model-load-best").onclick= () => { sendCommand("load_best");      setStatus("Loading best…"); };
+    document.getElementById("reset-humanoid").onclick = () => { sendCommand("reset");          setStatus("Resetting…"); };
+
+    camToggleBtn.onclick = () => sendCommand("toggle_camera");
+
+    mouseLookBtn.onclick = () => {
+        if (isFirstPerson) return;
+        mouseLookEnabled = !mouseLookEnabled;
+        mouseLookBtn.textContent = mouseLookEnabled ? "Disable Mouse Look" : "Mouse Look";
+        mouseLookBtn.classList.toggle('active', mouseLookEnabled);
+        if (mouseLookEnabled) document.body.requestPointerLock?.();
+        else document.exitPointerLock?.();
+        sendCommand("mouse_look", {enabled: mouseLookEnabled});
+    };
+
+    function disableMouseLook() {
+        if (!mouseLookEnabled) return;
+        mouseLookEnabled = false;
+        mouseLookBtn.textContent = "Mouse Look";
+        mouseLookBtn.classList.remove('active');
+        document.exitPointerLock?.();
+        sendCommand("mouse_look", {enabled: false});
+    }
+
+    // ── Keyboard ──────────────────────────────────────────────────────
+    document.addEventListener("keydown", e => {
+        if (e.key === "Escape") { disableMouseLook(); return; }
+        if (e.key === "v" || e.key === "V") { sendCommand("toggle_camera"); return; }
+        if (!isFirstPerson) sendCommand("keydown", {key: e.key.toLowerCase()});
+        if (e.ctrlKey && e.key === 's') { e.preventDefault(); document.getElementById("model-save").click(); }
+        if (e.ctrlKey && e.key === 'l') { e.preventDefault(); document.getElementById("model-load").click(); }
+        if (e.ctrlKey && e.key === 't') {
+            e.preventDefault();
+            const b = document.getElementById("train-start");
+            (!b.disabled ? b : document.getElementById("train-stop")).click();
+        }
+    });
+    document.addEventListener("keyup", e => { if (!isFirstPerson) sendCommand("keyup", {key: e.key.toLowerCase()}); });
+    document.addEventListener("mousemove", e => {
+        if (!mouseLookEnabled || isFirstPerson) return;
+        sendCommand("mouse", {x: e.movementX || 0, y: e.movementY || 0});
+    });
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+            document.getElementById("video-feed").src = "/video_feed?" + Date.now();
+            refreshRewardPlot();
+        }
+    });
+</script>
+</body>
+</html>
