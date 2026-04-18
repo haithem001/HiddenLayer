@@ -17,5 +17,5 @@ class Object3D:
 class Component3D(Object3D):
     def __init__(self, Coordinates, Total_mass, Light, components):
         super().__init__(self, Coordinates, Total_mass, Light, components)
-
+    pass
 
