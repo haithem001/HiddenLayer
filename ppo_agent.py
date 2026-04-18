@@ -13,6 +13,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions import Normal
+import matplotlib.pyplot as plt
+from torchview import draw_graph
 
 
 OBS_DIM = 20
@@ -35,7 +37,71 @@ LOG_STD_MAX        = 2.0
 
 
 # ── Network ───────────────────────────────────────────────────────────
+def visualize_network(model, title="Network", save_path=None):
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import torch.nn as nn
 
+    layers = []
+    weights = []
+
+    # Extract structure
+    for layer in model.net:
+        if isinstance(layer, nn.Linear):
+            w = layer.weight.detach().cpu().numpy()
+            weights.append(w)
+            layers.append(w.shape[1])  # input size
+    layers.append(weights[-1].shape[0])  # output size
+
+    fig, ax = plt.subplots(figsize=(12, 7))
+
+    # Layout parameters
+    layer_spacing = 2.0
+    neuron_spacing = 1.0
+
+    positions = []
+
+    # Draw neurons
+    for i, layer_size in enumerate(layers):
+        y_positions = np.linspace(
+            -layer_size / 2, layer_size / 2, layer_size
+        )
+        x_positions = np.full(layer_size, i * layer_spacing)
+
+        layer_pos = list(zip(x_positions, y_positions))
+        positions.append(layer_pos)
+
+        for (x, y) in layer_pos:
+            circle = plt.Circle((x, y), 0.15, color='skyblue', ec='black')
+            ax.add_patch(circle)
+
+    # Draw connections
+    for i, w in enumerate(weights):
+        for j in range(w.shape[1]):   # input neuron
+            for k in range(w.shape[0]):  # output neuron
+                x1, y1 = positions[i][j]
+                x2, y2 = positions[i + 1][k]
+
+                weight = w[k, j]
+
+                # Normalize weight for visibility
+                alpha = min(1.0, abs(weight) / 1.0)
+
+                color = 'green' if weight > 0 else 'red'
+
+                ax.plot([x1, x2], [y1, y2],
+                        color=color,
+                        alpha=alpha * 0.3,
+                        linewidth=0.5)
+
+    ax.set_title(title)
+    ax.axis('off')
+
+    if save_path:
+        plt.savefig(save_path, dpi=150, bbox_inches='tight')
+        print(f"🧠 Network saved → {save_path}")
+
+    plt.show()
 class MLP(nn.Module):
     def __init__(self, in_dim, out_dim, hidden=(256, 256)):
         super().__init__()
@@ -196,7 +262,9 @@ class PPOAgent:
                 self.load('checkpoints/walker_ppo.pt')
 
     # ── Inference ─────────────────────────────────────────────────────
-
+    def visualize_actor_critic(self):
+        visualize_network(self.ac.actor_mean, "Actor Network", "actor_network.png")
+        visualize_network(self.ac.critic, "Critic Network", "critic_network.png")
     @torch.no_grad()
     def get_action_and_info(self, obs: np.ndarray):
         """Stochastic action + log_prob + value — used during rollout collection."""

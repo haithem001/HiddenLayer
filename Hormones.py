@@ -561,6 +561,7 @@ class InternalStateVector:
 
         return hormones
     def get_all_hormones_grouped(self):
+
         return {
             "G1": vars(self.G1).copy(),
             "G2": vars(self.G2).copy(),
@@ -607,6 +608,7 @@ class InternalStateVector:
             "alive":       self.is_alive(),
             "necessities": self.necessities()
         }
+    
 
 
 # ============================================================

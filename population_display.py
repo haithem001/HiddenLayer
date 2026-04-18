@@ -1,6 +1,6 @@
-import math
 import numpy as np
-from humanoid       import create_walker
+from humanoid_create_walker import create_walker
+from Hormones import *
 from walker_physics import WalkerPhysics
 from walker_env     import WalkerEnv
 from head_gaze import HeadGaze
@@ -21,6 +21,7 @@ class _SingleWalker:
         self.dead_lines  = None
         self.physics = WalkerPhysics(dt=0.008)
         self.gaze = HeadGaze()
+        self.isv = InternalStateVector()
 
         self._build()
 
@@ -73,6 +74,8 @@ class _SingleWalker:
         self.dead_points = None
         self.dead_lines  = None
         self._build(spawn_x=spawn_x, spawn_z=spawn_z, face_angle=face_angle)
+        self.isv         = InternalStateVector()
+
         return self.env.reset()
 
     def on_target_changed(self):
@@ -122,6 +125,38 @@ class _SingleWalker:
         obs, reward, done, info = self.env.step(action)
         self._pin_head()
 
+        # update hormones every physics step
+        ti = self.joint_names['torso']
+        vx = self.velocities[ti]['vx']
+        vz = self.velocities[ti].get('vz', 0.0)
+        activity = min(1.0, math.sqrt(vx**2 + vz**2) * 2.0)
+        reward_val = float(reward)
+
+        hormone_env = {
+            "activity_level": activity,
+            "darkness":       0.0,
+            "light":          1.0,
+            "pain_level":     max(0.0, -reward_val * 0.1),
+            "safety_level":   0.0 if done else 0.8,
+            "food_intake":    0.0,
+            "blood_sugar":    0.5,
+            "fat_reserves":   0.5,
+            "hydration":      0.5,
+            "blood_pressure": 0.5,
+            "oxygen_level":   0.8,
+            "damage_level":   1.0 if done else 0.0,
+            "sleep_depth":    0.0,
+        }
+        hormone_events = {
+            "success":        1 if reward_val > 1.0 else 0,
+            "failure":        1 if done else 0,
+            "threat":         0,
+            "social_success": 0,
+            "social_bond":    0,
+            "dominance":      0,
+        }
+        self.isv.update(dt=0.08, env=hormone_env, events=hormone_events)
+
         if done and not self.dead:
             self.dead        = True
             self.dead_points = [p.copy() for p in self.points]
@@ -163,7 +198,7 @@ class Population:
 
         self.episode       = 0
         self.all_time_best = float('inf')
-        self._reset_all()
+        self.reset_all()
 
     @property
     def n_alive(self):
@@ -210,7 +245,7 @@ class Population:
         for h in self.humans:
             if not h.dead and hasattr(h, 'gaze'):
                 h.update_gaze(self.target)
-    def _reset_all(self, spawn_x=None, spawn_z=None, face_target=False):
+    def reset_all(self, spawn_x=None, spawn_z=None, face_target=False):
         spread = 1.5
         n = len(self.humans)
         z_offsets = np.linspace(-(n // 2) * spread, (n // 2) * spread, n)
