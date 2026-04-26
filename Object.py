@@ -19,3 +19,5 @@ class Component3D(Object3D):
         super().__init__(self, Coordinates, Total_mass, Light, components)
 
 
+
+

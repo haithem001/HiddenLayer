@@ -7,6 +7,20 @@ from PIL import Image, ImageDraw
 import io
 import math
 
+# ── Voxel terrain ─────────────────────────────────────────────────────
+from voxel_terrain import VoxelWorld, TerrainRenderer
+
+_terrain: VoxelWorld | None = None
+_terrain_renderer: TerrainRenderer | None = None
+
+
+def set_terrain(world: VoxelWorld):
+    """Call once from main.py after creating the world."""
+    global _terrain, _terrain_renderer
+    _terrain = world
+    _terrain_renderer = TerrainRenderer(world)
+
+
 WIDTH, HEIGHT = 1600, 900
 
 pygame.font.init()
@@ -239,25 +253,6 @@ def draw_humanoid_heads(humans):
 
 
 # ── Vision HUD overlay ─────────────────────────────────────────────────
-#
-# D = full visual field (outermost rect, screen-filling)
-# C = clear-vision zone (70 % of D)
-# B = fovea / tight zone  (matches FOV_SEARCH_HALF ≈ 10 °)
-# A = pupil circle — position encodes WHERE the eye is looking
-#
-# Pupil position per gaze state
-# ─────────────────────────────
-# searching  → pupil drifts across D following the head-sweep angle.
-#              The sweep offset comes from eye_data['sweep_x'] which
-#              main.py writes from HeadGaze._sweep_offset.
-# tracking   → pupil moves toward the detected target position (retinal_x/y
-#              mapped into D-pixel space).
-# pursuing   → pupil locked on target, contracts with proximity + lux.
-#
-# Light
-# ─────
-# bright (high lux) → strong dark vignette at edges, small pupil
-# dark              → no vignette, large dilated pupil
 
 _HUD_COLOURS = {
     'searching': (80,  200, 255),
@@ -272,7 +267,6 @@ def _rect_bbox(cx, cy, w, h):
 
 
 def _draw_vignette(d, iw, ih, vignette_alpha):
-    """Radial dark vignette at frame edges — stronger in bright scenes."""
     if vignette_alpha < 5:
         return
     cx, cy  = iw // 2, ih // 2
@@ -290,20 +284,6 @@ def _draw_vignette(d, iw, ih, vignette_alpha):
 
 
 def draw_eye_overlay(img: Image.Image, eye_data: dict) -> Image.Image:
-    """
-    Composite the full vision HUD onto img.
-    eye_data keys — all from Eye.get_render_data() plus 'sweep_x'/'sweep_y'
-    added by main.py:
-      cx, cy          – pupil pixel offset from screen centre
-      radius          – pupil radius in pixels
-      state           – 'searching' | 'tracking' | 'pursuing'
-      target_in_fov   – bool
-      ambient_lux     – 0-1  (from LightModel)
-      pupil_dilation  – 0=contracted … 1=dilated
-      vignette_alpha  – 0-255 vignette strength
-      sweep_x, sweep_y– normalised [-1,1] head-sweep position (searching only)
-      D_w,D_h,C_w,C_h,B_w,B_h  – zone pixel sizes
-    """
     if not eye_data:
         return img
 
@@ -331,49 +311,39 @@ def draw_eye_overlay(img: Image.Image, eye_data: dict) -> Image.Image:
         layer = Image.new('RGBA', (iw, ih), (0, 0, 0, 0))
         d     = ImageDraw.Draw(layer)
 
-        # ── Vignette ──────────────────────────────────────────────────
         _draw_vignette(d, iw, ih, vignette_alpha)
 
         fill_alpha    = 12
         outline_alpha = 155
         lw            = 2
 
-        # ── D rect ───────────────────────────────────────────────────
         d.rectangle(_rect_bbox(hud_cx, hud_cy, D_w, D_h),
                     fill=(cr, cg, cb, fill_alpha),
                     outline=(cr, cg, cb, outline_alpha), width=lw)
 
-        # ── C rect ───────────────────────────────────────────────────
         d.rectangle(_rect_bbox(hud_cx, hud_cy, C_w, C_h),
                     fill=(cr, cg, cb, fill_alpha),
                     outline=(cr, cg, cb, outline_alpha), width=lw)
 
-        # ── B rect (fovea) — brightens when target is inside ─────────
         b_fill_a = 40 if target_in_fov else fill_alpha
         d.rectangle(_rect_bbox(hud_cx, hud_cy, B_w, B_h),
                     fill=(cr, cg, cb, b_fill_a),
                     outline=(cr, cg, cb, outline_alpha), width=lw)
 
-        # Crosshair inside B
         bx0 = hud_cx - B_w / 2;  bx1 = hud_cx + B_w / 2
         by0 = hud_cy - B_h / 2;  by1 = hud_cy + B_h / 2
         d.line([(bx0, hud_cy), (bx1, hud_cy)], fill=(cr, cg, cb, 30), width=1)
         d.line([(hud_cx, by0), (hud_cx, by1)], fill=(cr, cg, cb, 30), width=1)
 
-        # ── Sweep trail (searching) ───────────────────────────────────
-        # Show where the head is currently pointing inside D
         if state == 'searching':
             sw_x = hud_cx + sweep_x * (D_w / 2.0)
             sw_y = hud_cy + sweep_y * (D_h / 2.0)
             sw_r = max(6, p_r * 0.5)
-            # Faint sweep cursor
             d.ellipse([sw_x - sw_r, sw_y - sw_r, sw_x + sw_r, sw_y + sw_r],
                       fill=None, outline=(cr, cg, cb, 55), width=1)
-            # Line from B-centre to sweep cursor
             d.line([(hud_cx, hud_cy), (int(sw_x), int(sw_y))],
                    fill=(cr, cg, cb, 30), width=1)
 
-        # ── A — pupil ─────────────────────────────────────────────────
         pu_cx = hud_cx + p_off_x
         pu_cy = hud_cy + p_off_y
 
@@ -382,13 +352,11 @@ def draw_eye_overlay(img: Image.Image, eye_data: dict) -> Image.Image:
                   fill=(cr, cg, cb, pupil_fill_a),
                   outline=(cr, cg, cb, outline_alpha), width=lw)
 
-        # Centre focus dot
         dot_r = max(4, p_r * 0.22)
         d.ellipse([pu_cx - dot_r, pu_cy - dot_r,
                    pu_cx + dot_r, pu_cy + dot_r],
                   fill=(cr, cg, cb, 235))
 
-        # Detection crosshair when locked
         if target_in_fov and state in ('tracking', 'pursuing'):
             ch = int(p_r * 0.9)
             d.line([(int(pu_cx - ch), int(pu_cy)), (int(pu_cx + ch), int(pu_cy))],
@@ -396,7 +364,6 @@ def draw_eye_overlay(img: Image.Image, eye_data: dict) -> Image.Image:
             d.line([(int(pu_cx), int(pu_cy - ch)), (int(pu_cx), int(pu_cy + ch))],
                    fill=(cr, cg, cb, 210), width=1)
 
-        # ── Zone labels ───────────────────────────────────────────────
         try:
             from PIL import ImageFont
             fnt = ImageFont.load_default()
@@ -410,7 +377,6 @@ def draw_eye_overlay(img: Image.Image, eye_data: dict) -> Image.Image:
         except Exception:
             pass
 
-        # ── Info text (bottom centre) ─────────────────────────────────
         try:
             from PIL import ImageFont
             fnt  = ImageFont.load_default()
@@ -445,10 +411,6 @@ def draw_eye_overlay(img: Image.Image, eye_data: dict) -> Image.Image:
 
 
 # ── Main render entry point ────────────────────────────────────────────
-#
-# ALWAYS returns a 2-tuple: (jpeg_bytes: bytes, retinal_result: dict | None)
-# retinal_result = {'detected': bool, 'retinal_x': float, 'retinal_y': float}
-#                  or None in overview mode
 
 def render_frame(camera_yaw, camera_pitch, camera_roll,
                  cam_x, cam_y, cam_z, points, lines, target, scene_rot_y=0.0,
@@ -483,6 +445,10 @@ def render_frame(camera_yaw, camera_pitch, camera_roll,
 
         draw_grid()
 
+        # ── Voxel terrain ─────────────────────────────────────────────
+        if _terrain_renderer is not None:
+            _terrain_renderer.draw()
+
         cx, cz = _get_walker_centroid(points)
         glPushMatrix()
         glTranslatef(cx, 0.0, cz)
@@ -512,29 +478,25 @@ def render_frame(camera_yaw, camera_pitch, camera_roll,
             draw_target(target['x'], target['y'], target['z'])
 
         draw_orientation_indicator(WIDTH, HEIGHT)
-        if ( # you can expose first_person_mode globally or pass it
-                eye_camera is not None and light_model is not None and
+        if (eye_camera is not None and light_model is not None and
                 head_pos is not None and gaze_yaw is not None and
                 gaze_pitch is not None and fov_deg is not None):
 
             hx, hy, hz = head_pos
 
-            # Define the retinal panel size and position (adjust as you like)
-            PANEL_W = 480          # or RETINA_W * 3 for nicer quality
-            PANEL_H = 270          # keep ~16:9
-            PANEL_X = 20           # left margin
-            PANEL_Y = 20           # bottom margin (OpenGL Y=0 is bottom)
+            PANEL_W = 480
+            PANEL_H = 270
+            PANEL_X = 20
+            PANEL_Y = 20
 
             glViewport(PANEL_X, PANEL_Y, PANEL_W, PANEL_H)
 
-            # Optional: clear only the panel area with a dark background
             glScissor(PANEL_X, PANEL_Y, PANEL_W, PANEL_H)
             glEnable(GL_SCISSOR_TEST)
             glClearColor(0.03, 0.03, 0.05, 1.0)
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
             glDisable(GL_SCISSOR_TEST)
 
-            # Set up projection for the retinal view
             glMatrixMode(GL_PROJECTION)
             glPushMatrix()
             glLoadIdentity()
@@ -545,7 +507,6 @@ def render_frame(camera_yaw, camera_pitch, camera_roll,
             glPushMatrix()
             glLoadIdentity()
 
-            # Head look direction
             fx = math.sin(gaze_yaw) * math.cos(gaze_pitch)
             fy = math.sin(gaze_pitch)
             fz = -math.cos(gaze_yaw) * math.cos(gaze_pitch)
@@ -556,15 +517,15 @@ def render_frame(camera_yaw, camera_pitch, camera_roll,
 
             glEnable(GL_DEPTH_TEST)
 
-            # Reuse the same minimal or full drawing code
+            # ── Draw terrain inside retinal panel too ─────────────────
+            if _terrain_renderer is not None:
+                _terrain_renderer.draw()
+
             if hasattr(eye_camera, '_draw_minimal'):
-                eye_camera._draw_minimal(points, lines, target)  # or call the full draw if you prefer
+                eye_camera._draw_minimal(points, lines, target)
             else:
-                # fallback to full scene draw (a bit heavier but consistent)
-                # ... repeat the cylinder/line/target drawing here or extract to a helper function ...
                 pass
 
-            # Read back the retinal pixels for detection + light model
             raw = glReadPixels(PANEL_X, PANEL_Y, PANEL_W, PANEL_H,
                                GL_RGB, GL_UNSIGNED_BYTE)
             retina_px = np.frombuffer(raw, dtype=np.uint8).reshape(PANEL_H, PANEL_W, 3)
@@ -579,14 +540,12 @@ def render_frame(camera_yaw, camera_pitch, camera_roll,
                 'retinal_y': ry,
             }
 
-            # Restore main matrices
             glMatrixMode(GL_PROJECTION)
             glPopMatrix()
             glMatrixMode(GL_MODELVIEW)
             glPopMatrix()
 
-            # Optional: draw a nice border around the retinal panel
-            glViewport(0, 0, WIDTH, HEIGHT)   # back to full
+            glViewport(0, 0, WIDTH, HEIGHT)
             glMatrixMode(GL_PROJECTION)
             glPushMatrix()
             glLoadIdentity()
@@ -608,17 +567,14 @@ def render_frame(camera_yaw, camera_pitch, camera_roll,
             glMatrixMode(GL_PROJECTION)
             glPopMatrix()
 
-        # Restore full viewport for any remaining 2D overlays
         glViewport(0, 0, WIDTH, HEIGHT)
 
         pygame.display.flip()
 
-        # ── Read full frame for JPEG output ──
         pixels = glReadPixels(0, 0, WIDTH, HEIGHT, GL_RGB, GL_UNSIGNED_BYTE)
         img = Image.frombytes('RGB', (WIDTH, HEIGHT), pixels)
         img = img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
 
-        # Apply the big eye HUD overlay only on top of the final image
         if eye_overlay:
             img = draw_eye_overlay(img, eye_overlay)
 

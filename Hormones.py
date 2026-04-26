@@ -40,6 +40,7 @@ SETPOINTS = {
 # homeo  = homeostatic pull strength (NEW)
 # self_i = self-inhibition to prevent runaway (NEW)
 # ============================================================
+
 CONSTANTS = {
     # Group 1 — slowed down significantly, added homeostasis
     "Dopamine": {
